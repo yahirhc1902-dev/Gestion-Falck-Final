@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 
-# --- 1. CONFIGURACIÓN INICIAL ---
+# --- 1. CONFIGURACIÓN Y ESTILOS ---
 st.set_page_config(page_title="Falck Pro - Gestión", layout="wide", initial_sidebar_state="collapsed")
 
-# CSS Limpio: Sin márgenes negativos para no ocultar la flecha del celular
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -35,29 +34,17 @@ st.markdown("""
     .res-nombre { font-size: 28px !important; font-weight: bold; color: white !important; margin:0;}
     .res-detalle { font-size: 22px !important; color: white !important; margin: 5px 0;}
 
-    /* Botones más robustos para uso táctil */
-    div.stButton > button {
-        width: 100%;
-        height: 45px !important;
-        font-weight: bold;
-    }
+    div.stButton > button { width: 100%; height: 45px !important; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. BASE DE DATOS (ESTRUCTURA CORREGIDA) ---
+# --- 2. BASE DE DATOS (ESTRUCTURA ORIGINAL FUNCIONAL) ---
 def preparar_sistema():
     conn = sqlite3.connect('transporte.db')
     cursor = conn.cursor()
-    # Tablas con nombres de columnas seguros (sin espacios)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS vehiculos (
-                        placa TEXT PRIMARY KEY, 
-                        modelo TEXT, 
-                        estado TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS conductores (
-                        cedula TEXT PRIMARY KEY, 
-                        nombre TEXT, 
-                        turno TEXT, 
-                        vehiculo_asignado TEXT)''')
+    # Usamos la estructura original para evitar conflictos en la nube
+    cursor.execute('CREATE TABLE IF NOT EXISTS vehiculos (placa TEXT PRIMARY KEY, modelo TEXT, estado TEXT)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS conductores ("id conductor" INTEGER PRIMARY KEY, nombre TEXT, turno TEXT, vehiculo_asignado TEXT)')
     conn.commit()
     conn.close()
 
@@ -97,7 +84,6 @@ st.markdown(f"""
 # --- 6. NAVEGACIÓN Y SEGURIDAD (BARRA LATERAL) ---
 st.sidebar.title("Menú del Sistema")
 
-# Filtro estricto: El conductor solo ve la consulta. El supervisor ve el resto si se loguea.
 if not st.session_state.autenticado:
     menu_activo = "👤 Consulta"
     st.sidebar.info("Modo Conductor Activo")
@@ -137,31 +123,27 @@ if menu_activo == "👤 Consulta":
     if st.session_state.mostrar_resultado and st.session_state.campo_cedula:
         cedula_ingresada = st.session_state.campo_cedula.strip()
         try:
-            # Consulta SQL segura y adaptada a la nueva estructura
+            # Consulta usando la columna original "id conductor"
             query = f"""
                 SELECT c.nombre, v.placa, c.turno 
                 FROM conductores c 
                 LEFT JOIN vehiculos v ON c.vehiculo_asignado = v.placa 
-                WHERE c.cedula = '{cedula_ingresada}'
+                WHERE c."id conductor" = '{cedula_ingresada}'
             """
             res = consultar(query)
             
             if not res.empty:
-                nombre_cond = res.iloc[0]['nombre']
-                placa_veh = res.iloc[0]['placa'] if pd.notna(res.iloc[0]['placa']) else 'SIN ASIGNAR'
-                turno_cond = res.iloc[0]['turno']
-                
                 st.markdown(f"""
                     <div class="resultado-consulta">
-                        <p class="res-nombre">Hola, {nombre_cond}</p>
-                        <p class="res-detalle">Vehículo: <strong>{placa_veh}</strong></p>
-                        <p class="res-detalle">Turno asignado: <strong>{turno_cond}</strong></p>
+                        <p class="res-nombre">Hola, {res.iloc[0,0]}</p>
+                        <p class="res-detalle">Vehículo: <strong>{res.iloc[0,1] if pd.notna(res.iloc[0,1]) and res.iloc[0,1] != '' else 'SIN ASIGNAR'}</strong></p>
+                        <p class="res-detalle">Turno asignado: <strong>{res.iloc[0,2]}</strong></p>
                     </div>
                 """, unsafe_allow_html=True)
             else:
                 st.error("Cédula no encontrada en la base de datos.")
         except Exception as e:
-            st.error(f"Error de conexión con la base de datos. Detalle: {e}")
+            st.error(f"Error de base de datos: {e}")
 
 elif menu_activo == "📝 Registro":
     st.header("📝 Registro de Personal y Flota")
@@ -171,28 +153,26 @@ elif menu_activo == "📝 Registro":
     with col_cond:
         st.subheader("👤 Nuevo Conductor")
         try:
-            # Buscar vehículos que no estén asignados a nadie
-            vehiculos_libres = consultar('''
-                SELECT placa FROM vehiculos 
-                WHERE placa NOT IN (SELECT vehiculo_asignado FROM conductores WHERE vehiculo_asignado IS NOT NULL AND vehiculo_asignado != '')
-            ''')
-            lista_placas = vehiculos_libres['placa'].tolist() if not vehiculos_libres.empty else ["Sin vehículos libres"]
+            vehiculos_libres = consultar('SELECT placa FROM vehiculos WHERE placa NOT IN (SELECT vehiculo_asignado FROM conductores WHERE vehiculo_asignado IS NOT NULL AND vehiculo_asignado != "")')
+            lista_placas = ["Sin asignar"] + vehiculos_libres['placa'].tolist() if not vehiculos_libres.empty else ["Sin asignar"]
         except:
-            lista_placas = ["Base de datos vacía"]
+            lista_placas = ["Sin asignar"]
 
         with st.form("form_conductor", clear_on_submit=True):
-            cedula_nueva = st.text_input("Cédula")
+            cedula_nueva = st.text_input("Cédula (Solo números)")
             nombre_nuevo = st.text_input("Nombre Completo")
-            turno_nuevo = st.selectbox("Turno Asignado", ["Mañana", "Tarde", "Noche"])
+            turno_nuevo = st.selectbox("Turno Asignado", ["1", "2", "3"])
             placa_asignar = st.selectbox("Asignar Vehículo", lista_placas)
             
             if st.form_submit_button("Guardar Conductor"):
                 if cedula_nueva and nombre_nuevo:
-                    placa_final = placa_asignar if placa_asignar != "Sin vehículos libres" and placa_asignar != "Base de datos vacía" else None
+                    placa_final = placa_asignar if placa_asignar != "Sin asignar" else None
                     try:
-                        ejecutar('INSERT INTO conductores (cedula, nombre, turno, vehiculo_asignado) VALUES (?, ?, ?, ?)', 
+                        # Insertando en la estructura original
+                        ejecutar('INSERT INTO conductores ("id conductor", nombre, turno, vehiculo_asignado) VALUES (?, ?, ?, ?)', 
                                  (cedula_nueva, nombre_nuevo, turno_nuevo, placa_final))
-                        st.success(f"Conductor {nombre_nuevo} registrado con éxito.")
+                        st.success("Conductor registrado con éxito.")
+                        st.rerun() # Fuerza la actualización de las listas
                     except sqlite3.IntegrityError:
                         st.error("Esta cédula ya está registrada.")
                 else:
@@ -208,43 +188,66 @@ elif menu_activo == "📝 Registro":
             if st.form_submit_button("Registrar Vehículo"):
                 if placa_nueva:
                     try:
-                        ejecutar('INSERT INTO vehiculos (placa, modelo, estado) VALUES (?, ?, ?)', 
-                                 (placa_nueva, modelo_nuevo, estado_nuevo))
-                        st.success(f"Vehículo {placa_nueva} registrado.")
+                        ejecutar('INSERT INTO vehiculos (placa, modelo, estado) VALUES (?, ?, ?)', (placa_nueva, modelo_nuevo, estado_nuevo))
+                        st.success("Vehículo registrado.")
+                        st.rerun() # Fuerza a que el vehículo aparezca en el otro formulario
                     except sqlite3.IntegrityError:
-                        st.error("Esta placa ya existe en el sistema.")
+                        st.error("Esta placa ya existe.")
                 else:
                     st.warning("La placa es obligatoria.")
 
 elif menu_activo == "🔄 Gestión":
-    st.header("⚙️ Gestión y Estado de Flota")
-    try:
-        df_vehiculos = consultar("SELECT placa, modelo, estado FROM vehiculos")
-        if not df_vehiculos.empty:
-            st.dataframe(df_vehiculos, use_container_width=True, hide_index=True)
-            
-            st.divider()
-            st.subheader("Actualizar Estado Rápido")
-            with st.form("form_actualizar_estado"):
-                placa_seleccionada = st.selectbox("Selecciona la placa:", df_vehiculos['placa'].tolist())
-                nuevo_estado = st.selectbox("Selecciona el nuevo estado:", ["Disponible", "En Ruta", "Mantenimiento"])
-                
-                if st.form_submit_button("Actualizar"):
-                    ejecutar('UPDATE vehiculos SET estado = ? WHERE placa = ?', (nuevo_estado, placa_seleccionada))
-                    st.success(f"El estado de la unidad {placa_seleccionada} ha cambiado a {nuevo_estado}.")
+    st.header("⚙️ Gestión y Edición de Base de Datos")
+    
+    # Creamos dos pestañas para organizar la gestión como antes
+    tab_cond, tab_veh = st.tabs(["🧑‍✈️ Conductores", "🚑 Vehículos"])
+    
+    with tab_cond:
+        st.subheader("Directorio de Conductores")
+        df_conductores = consultar('SELECT "id conductor" as Cédula, nombre as Nombre, turno as Turno, vehiculo_asignado as Vehículo FROM conductores')
+        st.dataframe(df_conductores, use_container_width=True, hide_index=True)
+        
+        if not df_conductores.empty:
+            with st.expander("⚠️ Eliminar Conductor"):
+                ced_borrar = st.selectbox("Selecciona la cédula a eliminar:", df_conductores['Cédula'].tolist())
+                if st.button("Eliminar Registro Conductor", type="primary"):
+                    ejecutar('DELETE FROM conductores WHERE "id conductor" = ?', (ced_borrar,))
+                    st.success("Conductor eliminado.")
                     st.rerun()
-        else:
-            st.info("Aún no hay vehículos registrados en el sistema para gestionar.")
-    except Exception as e:
-        st.error(f"Error al cargar la gestión: {e}")
+
+    with tab_veh:
+        st.subheader("Directorio de Vehículos")
+        df_vehiculos = consultar("SELECT placa as Placa, modelo as Modelo, estado as Estado FROM vehiculos")
+        st.dataframe(df_vehiculos, use_container_width=True, hide_index=True)
+        
+        if not df_vehiculos.empty:
+            st.write("Actualizar Estado")
+            col_ed1, col_ed2, col_ed3 = st.columns(3)
+            with col_ed1:
+                placa_sel = st.selectbox("Placa:", df_vehiculos['Placa'].tolist())
+            with col_ed2:
+                nuevo_est = st.selectbox("Nuevo estado:", ["Disponible", "En Ruta", "Mantenimiento"])
+            with col_ed3:
+                st.write("") # Espaciador
+                if st.button("Actualizar"):
+                    ejecutar('UPDATE vehiculos SET estado = ? WHERE placa = ?', (nuevo_est, placa_sel))
+                    st.success("Estado actualizado.")
+                    st.rerun()
+            
+            with st.expander("⚠️ Eliminar Vehículo"):
+                placa_borrar = st.selectbox("Selecciona la placa a eliminar:", df_vehiculos['Placa'].tolist(), key="del_veh")
+                if st.button("Eliminar Registro Vehículo", type="primary"):
+                    ejecutar('DELETE FROM vehiculos WHERE placa = ?', (placa_borrar,))
+                    st.success("Vehículo eliminado.")
+                    st.rerun()
 
 elif menu_activo == "📅 Programación":
     st.header("📅 Vista General de Programación")
     try:
-        # Consulta robusta para unir la información de ambas tablas
+        # Consulta original restaurada
         query_general = '''
             SELECT 
-                c.cedula as "Cédula", 
+                c."id conductor" as "Cédula", 
                 c.nombre as "Conductor", 
                 c.turno as "Turno", 
                 IFNULL(v.placa, 'Sin Asignar') as "Vehículo", 
@@ -253,10 +256,6 @@ elif menu_activo == "📅 Programación":
             LEFT JOIN vehiculos v ON c.vehiculo_asignado = v.placa
         '''
         datos_completos = consultar(query_general)
-        
-        if not datos_completos.empty:
-            st.dataframe(datos_completos, use_container_width=True, hide_index=True)
-        else:
-            st.info("No hay conductores programados todavía. Ve a la pestaña 'Registro' para iniciar.")
+        st.dataframe(datos_completos, use_container_width=True, hide_index=True)
     except Exception as e:
-        st.error(f"No se pudo cargar la programación. Verifica la base de datos. Detalle: {e}")
+        st.error(f"Error al cargar la tabla: {e}")
